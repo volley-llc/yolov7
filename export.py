@@ -29,6 +29,9 @@ if __name__ == '__main__':
     parser.add_argument('--topk-all', type=int, default=100, help='topk objects for every images')
     parser.add_argument('--iou-thres', type=float, default=0.45, help='iou threshold for NMS')
     parser.add_argument('--conf-thres', type=float, default=0.25, help='conf threshold for NMS')
+    parser.add_argument('--add_preprocessing', type=bool, default=False, help='Add image preprocessing into graph')
+    parser.add_argument('--preprocessing_raw_input_height', type=int, default=1080, help='Raw image height for preprocessing')
+    parser.add_argument('--preprocessing_raw_input_width', type=int, default=1920, help='Raw image width for preprocessing')
     parser.add_argument('--device', default='cpu', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--simplify', action='store_true', help='simplify onnx model')
     parser.add_argument('--include-nms', action='store_true', help='export end2end onnx')
@@ -69,49 +72,6 @@ if __name__ == '__main__':
     if opt.include_nms:
         model.model[-1].include_nms = True
         y = None
-
-    # TorchScript export
-    try:
-        print('\nStarting TorchScript export with torch %s...' % torch.__version__)
-        f = opt.weights.replace('.pt', '.torchscript.pt')  # filename
-        ts = torch.jit.trace(model, img, strict=False)
-        ts.save(f)
-        print('TorchScript export success, saved as %s' % f)
-    except Exception as e:
-        print('TorchScript export failure: %s' % e)
-
-    # CoreML export
-    try:
-        import coremltools as ct
-
-        print('\nStarting CoreML export with coremltools %s...' % ct.__version__)
-        # convert model from torchscript and apply pixel scaling as per detect.py
-        ct_model = ct.convert(ts, inputs=[ct.ImageType('image', shape=img.shape, scale=1 / 255.0, bias=[0, 0, 0])])
-        bits, mode = (8, 'kmeans_lut') if opt.int8 else (16, 'linear') if opt.fp16 else (32, None)
-        if bits < 32:
-            if sys.platform.lower() == 'darwin':  # quantization only supported on macOS
-                with warnings.catch_warnings():
-                    warnings.filterwarnings("ignore", category=DeprecationWarning)  # suppress numpy==1.20 float warning
-                    ct_model = ct.models.neural_network.quantization_utils.quantize_weights(ct_model, bits, mode)
-            else:
-                print('quantization only supported on macOS, skipping...')
-
-        f = opt.weights.replace('.pt', '.mlmodel')  # filename
-        ct_model.save(f)
-        print('CoreML export success, saved as %s' % f)
-    except Exception as e:
-        print('CoreML export failure: %s' % e)
-                     
-    # TorchScript-Lite export
-    try:
-        print('\nStarting TorchScript-Lite export with torch %s...' % torch.__version__)
-        f = opt.weights.replace('.pt', '.torchscript.ptl')  # filename
-        tsl = torch.jit.trace(model, img, strict=False)
-        tsl = optimize_for_mobile(tsl)
-        tsl._save_for_lite_interpreter(f)
-        print('TorchScript-Lite export success, saved as %s' % f)
-    except Exception as e:
-        print('TorchScript-Lite export failure: %s' % e)
 
     # ONNX export
     try:
@@ -196,6 +156,11 @@ if __name__ == '__main__':
             print('Registering NMS plugin for ONNX...')
             mo = RegisterNMS(f)
             mo.register_nms()
+            
+            if opt.add_preprocessing:
+                print('Adding pre-processing of input image')
+                mo.add_preprocessing(raw_width=opt.preprocessing_raw_input_width,
+                                     raw_height=opt.preprocessing_raw_input_height)
             mo.save(f)
 
     except Exception as e:

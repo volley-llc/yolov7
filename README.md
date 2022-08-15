@@ -1,5 +1,25 @@
 # Official YOLOv7
 
+## Conversion to TRT
+### Without pre-processing
+- Input: [1, 3, 640, 640]
+- Input should be normalized (devided by 255)
+``` shell
+python3 export.py --weights yolov7.pt --grid --include-nms --simplify --topk-all 50 --iou-thres 0.65 --conf-thres 0.35
+```
+
+### With pre-processing
+- Input: [1, raw_height, raw_width, 3], so you have to define raw input resolution
+
+Pre-processing adds additional steps into computational graph:
+- Transpose [1, 1080, 1920, 3] -> [1, 3, 1080, 1920]
+- Add symmetric padding to top and bottom (constant 114.0) to save aspect ratio [1, 3, 1080, 1920] -> [1, 3, 1920, 1920]
+- Resize to model's resolution [1, 3, 1920, 1920] -> [1, 3, 640, 640] using nearest mode
+- Normalize input by deviding each pixel by 255
+``` shell
+python3 export.py --weights yolov7.pt --grid --include-nms --simplify --topk-all 50 --iou-thres 0.65 --conf-thres 0.35 --add_preprocessing True --preprocessing_raw_input_height 1080 --preprocessing_raw_input_width 1920
+```
+
 Implementation of paper - [YOLOv7: Trainable bag-of-freebies sets new state-of-the-art for real-time object detectors](https://arxiv.org/abs/2207.02696)
 
 [![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/yolov7-trainable-bag-of-freebies-sets-new/real-time-object-detection-on-coco)](https://paperswithcode.com/sota/real-time-object-detection-on-coco?p=yolov7-trainable-bag-of-freebies-sets-new)

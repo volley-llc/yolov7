@@ -69,6 +69,68 @@ class RegisterNMS(object):
         onnx.save(model, output_path)
         LOGGER.info(f"Saved ONNX model to {output_path}")
 
+    def add_preprocessing(self, raw_width, raw_height):
+        op_input = self.graph.inputs[0]
+
+        input_raw = gs.Variable(
+            name="input_raw",
+            dtype=np.float32,
+            shape=[1, raw_height, raw_width, 3]
+        )
+        self.graph.inputs = [input_raw]
+
+        # Transpose input
+        input_raw_transposed = gs.Variable(
+            name="input_raw_transposed",
+            dtype=np.float32,
+            shape=[1, 3, raw_height, raw_width]
+        )
+
+        self.graph.layer(op='Transpose',
+                         name='transpose_input',
+                         inputs=[input_raw],
+                         outputs=[input_raw_transposed],
+                         attrs={'perm': [0, 3, 1, 2]})
+
+
+        # Add padding
+        max_dim = max(raw_width, raw_height)
+        input_raw_padded = gs.Variable(
+            name="input_raw_padded",
+            dtype=np.float32,
+            shape=[1, 3, max_dim, max_dim]
+        )
+
+        pads = gs.Constant('pads', np.array([0, 0, int(max_dim - raw_height), int(max_dim - raw_width)], np.int64))
+        pad_value = gs.Constant('pad_value', np.array(114.0, np.float32))
+        self.graph.layer(op='Pad',
+                         name='pad_input',
+                         inputs=[input_raw_transposed, pads, pad_value],
+                         outputs=[input_raw_padded],
+                         attrs={'mode':'constant'})
+
+        # Resize to target input
+        input_raw_resized = gs.Variable(
+            name="input_raw_resized",
+            dtype=np.float32,
+            shape=op_input.shape
+        )
+        target_size = gs.Constant('resize_target_size', np.array(op_input.shape, np.int64))
+        self.graph.layer(op='Resize',
+                         name='resize_input',
+                         inputs=[input_raw_padded, gs.Variable.empty(), gs.Variable.empty(), target_size],
+                         outputs=[input_raw_resized],
+                         attrs={'mode':'nearest'})
+
+        # Devide by 255
+        self.graph.layer(op='Mul',
+                         name='input_div_by_255',
+                         inputs=[input_raw_resized, gs.Constant('const_1_div_255', np.array(1/255.0, np.float32))],
+                         outputs=[op_input])
+        
+
+        self.infer()
+
     def register_nms(
         self,
         *,
@@ -151,5 +213,6 @@ class RegisterNMS(object):
         """
         self.graph.cleanup().toposort()
         model = gs.export_onnx(self.graph)
+        print(onnx.helper.printable_graph(model.graph))
         onnx.save(model, output_path)
         LOGGER.info(f"Saved ONNX model to {output_path}")
